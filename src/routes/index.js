@@ -1,0 +1,24 @@
+// Combines all API route modules in one router.
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.apiRouter = void 0;
+const { Router } = require("express");
+const { authRouter } = require("./auth.routes");
+const { catalogRouter } = require("./catalog.routes");
+const { transferRouter } = require("./transfer.routes");
+const { decayRouter } = require("./decay.routes");
+const { auditRouter } = require("./audit.routes");
+const { userRouter } = require("./user.routes");
+const { reservationRouter } = require("./reservation.routes");
+const { forecastRouter } = require("./forecast.routes");
+const { jobRouter } = require("./job.routes");
+exports.apiRouter = Router();
+exports.apiRouter.use("/auth", authRouter);
+exports.apiRouter.use(userRouter);
+exports.apiRouter.use(catalogRouter);
+exports.apiRouter.use(transferRouter);
+exports.apiRouter.use(reservationRouter);
+exports.apiRouter.use(forecastRouter);
+exports.apiRouter.use(decayRouter);
+exports.apiRouter.use(auditRouter);
+exports.apiRouter.use(jobRouter);

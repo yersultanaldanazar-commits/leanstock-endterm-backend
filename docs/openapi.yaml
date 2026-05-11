@@ -1,0 +1,317 @@
+# Describes the documented API contract for LeanStock.
+openapi: 3.0.3
+info:
+  title: LeanStock API
+  version: 2.0.0
+  description: Production-grade LeanStock backend API with JWT auth, RBAC, Redis reservations, email queue, forecasting, and audit logs.
+servers:
+  - url: http://localhost:3001/api/v1
+security:
+  - bearerAuth: []
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  schemas:
+    Error:
+      type: object
+      example: { error: { code: VALIDATION_ERROR, message: "body.email: Invalid email" } }
+    Paginated:
+      type: object
+      properties:
+        data: { type: array, items: { type: object } }
+        meta:
+          type: object
+          properties:
+            total: { type: integer, example: 42 }
+            limit: { type: integer, example: 20 }
+            offset: { type: integer, example: 0 }
+            hasMore: { type: boolean, example: true }
+    RegisterRequest:
+      type: object
+      required: [tenantName, email, password]
+      properties:
+        tenantName: { type: string, example: Demo Retail Chain }
+        email: { type: string, example: admin@demo.kz }
+        password: { type: string, example: Password123! }
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: { type: string, example: admin@demo.kz }
+        password: { type: string, example: Password123! }
+    TokenPair:
+      type: object
+      properties:
+        accessToken: { type: string, example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9... }
+        refreshToken: { type: string, example: Jk3cGv... }
+        tokenType: { type: string, example: Bearer }
+        expiresIn: { type: string, example: 15m }
+        user: { type: object }
+    LocationRequest:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, example: Main Warehouse }
+        address: { type: string, example: Shymkent }
+    SkuRequest:
+      type: object
+      required: [name, skuCode, costPrice, sellPrice]
+      properties:
+        name: { type: string, example: Laptop }
+        skuCode: { type: string, example: LAPTOP-001 }
+        unit: { type: string, example: piece }
+        costPrice: { type: number, example: 300000 }
+        sellPrice: { type: number, example: 400000 }
+        barcode: { type: string, example: "123456789" }
+    InventoryReceiveRequest:
+      type: object
+      required: [skuId, locationId, quantity]
+      properties:
+        skuId: { type: string, format: uuid }
+        locationId: { type: string, format: uuid }
+        quantity: { type: integer, example: 100 }
+        reorderPoint: { type: integer, example: 10 }
+    TransferRequest:
+      type: object
+      required: [skuId, sourceLocationId, destinationLocationId, quantity]
+      properties:
+        skuId: { type: string, format: uuid }
+        sourceLocationId: { type: string, format: uuid }
+        destinationLocationId: { type: string, format: uuid }
+        quantity: { type: integer, example: 20 }
+    UserCreateRequest:
+      type: object
+      required: [email, password, role]
+      properties:
+        email: { type: string, example: manager@demo.kz }
+        password: { type: string, example: Password123! }
+        role: { type: string, example: WAREHOUSE_MANAGER, enum: [WAREHOUSE_MANAGER, STAFF_MEMBER, AUDITOR, API_CLIENT] }
+    ReservationRequest:
+      type: object
+      required: [inventoryId, quantity]
+      properties:
+        inventoryId: { type: string, format: uuid }
+        orderId: { type: string, format: uuid }
+        quantity: { type: integer, example: 2 }
+        ttlSeconds: { type: integer, example: 900 }
+    SaleRequest:
+      type: object
+      required: [skuId, locationId, quantitySold]
+      properties:
+        skuId: { type: string, format: uuid }
+        locationId: { type: string, format: uuid }
+        quantitySold: { type: integer, example: 5 }
+        soldAt: { type: string, format: date-time }
+responses:
+  Unauthorized:
+    description: Missing or invalid authentication
+    content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  Forbidden:
+    description: Authenticated role is not allowed
+    content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+  Validation:
+    description: Validation failed
+    content: { application/json: { schema: { $ref: '#/components/schemas/Error' } } }
+paths:
+  /auth/register:
+    post:
+      security: []
+      tags: [Auth]
+      summary: Register tenant and first admin, queue verification email
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/RegisterRequest' } } } }
+      responses:
+        '201': { description: Registered, content: { application/json: { example: { message: Registration created. Verify email before login., verificationTokenForDemo: dev-only-token } } } }
+        '409': { description: Email already registered }
+        '422': { $ref: '#/components/responses/Validation' }
+  /auth/verify-email:
+    post:
+      security: []
+      tags: [Auth]
+      summary: Verify email by token
+      requestBody: { required: true, content: { application/json: { schema: { type: object, properties: { token: { type: string } }, example: { token: dev-token } } } } }
+      responses: { '200': { description: Verified }, '401': { $ref: '#/components/responses/Unauthorized' } }
+    get:
+      security: []
+      tags: [Auth]
+      summary: Verify email from link query
+      parameters: [{ in: query, name: token, schema: { type: string }, required: true }]
+      responses: { '200': { description: Verified }, '401': { $ref: '#/components/responses/Unauthorized' } }
+  /auth/resend-verification:
+    post:
+      security: []
+      tags: [Auth]
+      summary: Resend verification email
+      requestBody: { required: true, content: { application/json: { schema: { type: object, example: { email: admin@demo.kz } } } } }
+      responses: { '200': { description: Queued if account is unverified } }
+  /auth/login:
+    post:
+      security: []
+      tags: [Auth]
+      summary: Login with verified email
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/LoginRequest' } } } }
+      responses: { '200': { description: Token pair, content: { application/json: { schema: { $ref: '#/components/schemas/TokenPair' } } } }, '401': { $ref: '#/components/responses/Unauthorized' } }
+  /auth/refresh:
+    post:
+      security: []
+      tags: [Auth]
+      summary: Rotate refresh token and issue new token pair
+      requestBody: { required: true, content: { application/json: { schema: { type: object, example: { refreshToken: refresh-token } } } } }
+      responses: { '200': { description: New token pair }, '401': { $ref: '#/components/responses/Unauthorized' } }
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke refresh token
+      requestBody: { required: true, content: { application/json: { schema: { type: object, example: { refreshToken: refresh-token } } } } }
+      responses: { '204': { description: Logged out }, '401': { $ref: '#/components/responses/Unauthorized' } }
+  /auth/forgot-password:
+    post:
+      security: []
+      tags: [Auth]
+      summary: Queue password reset email
+      requestBody: { required: true, content: { application/json: { schema: { type: object, example: { email: admin@demo.kz } } } } }
+      responses: { '200': { description: Queued if account exists } }
+  /auth/reset-password:
+    post:
+      security: []
+      tags: [Auth]
+      summary: Reset password and revoke refresh tokens
+      requestBody: { required: true, content: { application/json: { schema: { type: object, example: { token: reset-token, newPassword: NewPassword123! } } } } }
+      responses: { '200': { description: Password reset }, '401': { $ref: '#/components/responses/Unauthorized' } }
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Current authenticated user
+      responses: { '200': { description: Current user }, '401': { $ref: '#/components/responses/Unauthorized' } }
+  /auth/password:
+    patch:
+      tags: [Auth]
+      summary: Change password
+      requestBody: { required: true, content: { application/json: { schema: { type: object, example: { currentPassword: Password123!, newPassword: NewPassword123! } } } } }
+      responses: { '200': { description: Changed }, '401': { $ref: '#/components/responses/Unauthorized' } }
+  /users:
+    get:
+      tags: [Users]
+      summary: List tenant users
+      parameters: [{ in: query, name: limit, schema: { type: integer, default: 20 } }, { in: query, name: offset, schema: { type: integer, default: 0 } }]
+      responses: { '200': { description: Users, content: { application/json: { schema: { $ref: '#/components/schemas/Paginated' } } } }, '403': { $ref: '#/components/responses/Forbidden' } }
+    post:
+      tags: [Users]
+      summary: Create manager/staff/auditor inside same tenant
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/UserCreateRequest' } } } }
+      responses: { '201': { description: User created and verification email queued }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /users/{id}:
+    get:
+      tags: [Users]
+      summary: Get tenant user
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      responses: { '200': { description: User }, '404': { description: Not found } }
+    patch:
+      tags: [Users]
+      summary: Update user role/status
+      parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }]
+      requestBody: { required: true, content: { application/json: { schema: { type: object, example: { role: STAFF_MEMBER, isActive: true } } } } }
+      responses: { '200': { description: Updated }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /locations:
+    get:
+      tags: [Catalog]
+      summary: List locations
+      responses: { '200': { description: Paginated locations } }
+    post:
+      tags: [Catalog]
+      summary: Create location
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/LocationRequest' } } } }
+      responses: { '201': { description: Created }, '403': { $ref: '#/components/responses/Forbidden' } }
+  /locations/{id}:
+    get: { tags: [Catalog], summary: Get location, parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Location } } }
+    patch: { tags: [Catalog], summary: Update location, parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Updated }, '403': { $ref: '#/components/responses/Forbidden' } } }
+    delete: { tags: [Catalog], summary: Soft delete location, parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Deleted }, '403': { $ref: '#/components/responses/Forbidden' } } }
+  /skus:
+    get: { tags: [Catalog], summary: List SKUs, responses: { '200': { description: Paginated SKUs } } }
+    post:
+      tags: [Catalog]
+      summary: Create SKU
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SkuRequest' } } } }
+      responses: { '201': { description: Created }, '409': { description: Duplicate skuCode } }
+  /skus/{id}:
+    get: { tags: [Catalog], summary: Get SKU, parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: SKU } } }
+    patch: { tags: [Catalog], summary: Update SKU, parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Updated } } }
+    delete: { tags: [Catalog], summary: Archive SKU, parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Archived } } }
+  /inventory:
+    get: { tags: [Inventory], summary: List inventory, responses: { '200': { description: Paginated inventory } } }
+  /inventory/receive:
+    post:
+      tags: [Inventory]
+      summary: Receive stock into location
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/InventoryReceiveRequest' } } } }
+      responses: { '201': { description: Inventory received } }
+  /inventory/low-stock:
+    get: { tags: [Inventory], summary: Low stock items, responses: { '200': { description: Paginated low stock } } }
+  /inventory/dead-stock:
+    get: { tags: [Inventory], summary: Dead stock items, responses: { '200': { description: Paginated dead stock } } }
+  /inventory/{id}:
+    get: { tags: [Inventory], summary: Get inventory item, parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Inventory } } }
+    patch: { tags: [Inventory], summary: Update inventory item, parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Updated } } }
+  /transfers:
+    get: { tags: [Transfers], summary: List transfers, responses: { '200': { description: Paginated transfers } } }
+    post:
+      tags: [Transfers]
+      summary: Atomic stock transfer between locations
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/TransferRequest' } } } }
+      responses: { '201': { description: Transfer completed }, '409': { description: Insufficient stock } }
+  /transfers/{id}:
+    get: { tags: [Transfers], summary: Get transfer, parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Transfer } } }
+  /transfers/{id}/complete:
+    post: { tags: [Transfers], summary: Complete pending transfer, parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Completed } } }
+  /transfers/{id}/cancel:
+    post: { tags: [Transfers], summary: Cancel pending transfer, parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Cancelled } } }
+  /reservations:
+    get: { tags: [Reservations], summary: List reservations, responses: { '200': { description: Paginated reservations } } }
+    post:
+      tags: [Reservations]
+      summary: Reserve inventory with Redis lock
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/ReservationRequest' } } } }
+      responses: { '201': { description: Reserved }, '409': { description: Not enough available stock } }
+  /reservations/expire:
+    post: { tags: [Reservations], summary: Expire old reservations, responses: { '200': { description: Expired count } } }
+  /reservations/{id}:
+    get: { tags: [Reservations], summary: Get reservation, parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Reservation } } }
+  /reservations/{id}/confirm:
+    post: { tags: [Reservations], summary: Confirm reservation and decrement inventory, parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Confirmed } } }
+  /reservations/{id}/release:
+    post: { tags: [Reservations], summary: Release reservation, parameters: [{ in: path, name: id, required: true, schema: { type: string, format: uuid } }], responses: { '200': { description: Released } } }
+  /sales:
+    post:
+      tags: [Forecasting]
+      summary: Record sale for forecasting
+      requestBody: { required: true, content: { application/json: { schema: { $ref: '#/components/schemas/SaleRequest' } } } }
+      responses: { '201': { description: Sale recorded } }
+  /forecast/reorder-point:
+    get:
+      tags: [Forecasting]
+      summary: Calculate moving-average reorder point
+      parameters:
+        - { in: query, name: skuId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: locationId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: days, schema: { type: integer, default: 30 } }
+        - { in: query, name: leadTimeDays, schema: { type: integer, default: 7 } }
+        - { in: query, name: safetyStock, schema: { type: integer, default: 5 } }
+      responses: { '200': { description: Forecast } }
+  /forecast/reorder-point/apply:
+    post:
+      tags: [Forecasting]
+      summary: Apply reorder point forecast
+      parameters:
+        - { in: query, name: skuId, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: locationId, required: true, schema: { type: string, format: uuid } }
+      responses: { '200': { description: Applied } }
+  /inventory/decay/run:
+    post: { tags: [Background], summary: Run dead stock decay job, responses: { '200': { description: Decay result } } }
+  /audit-logs:
+    get: { tags: [Audit], summary: List audit logs, responses: { '200': { description: Paginated audit logs }, '403': { $ref: '#/components/responses/Forbidden' } } }
+  /jobs/email:
+    get: { tags: [Jobs], summary: List Redis email jobs, responses: { '200': { description: Job visibility } } }
+  /jobs/email/process-next:
+    post: { tags: [Jobs], summary: Manually process next email job, responses: { '200': { description: Worker result } } }

@@ -1,0 +1,22 @@
+// Defines API routes for authentication.
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.authRouter = void 0;
+const { Router } = require("express");
+const { authenticate } = require("../middleware/auth.middleware");
+const { authRateLimiter } = require("../middleware/rateLimiter.middleware");
+const { validate } = require("../middleware/validate.middleware");
+const { registerSchema, loginSchema, refreshSchema, logoutSchema, changePasswordSchema, verifyEmailSchema, resendVerificationSchema, forgotPasswordSchema, resetPasswordSchema } = require("../schemas/auth.schema");
+const controller = require("../controllers/auth.controller");
+exports.authRouter = Router();
+exports.authRouter.post("/register", authRateLimiter, validate(registerSchema), controller.register);
+exports.authRouter.post("/verify-email", authRateLimiter, validate(verifyEmailSchema), controller.verifyEmail);
+exports.authRouter.get("/verify-email", authRateLimiter, validate(verifyEmailSchema), controller.verifyEmail);
+exports.authRouter.post("/resend-verification", authRateLimiter, validate(resendVerificationSchema), controller.resendVerification);
+exports.authRouter.post("/login", authRateLimiter, validate(loginSchema), controller.login);
+exports.authRouter.post("/refresh", authRateLimiter, validate(refreshSchema), controller.refresh);
+exports.authRouter.post("/forgot-password", authRateLimiter, validate(forgotPasswordSchema), controller.forgotPassword);
+exports.authRouter.post("/reset-password", authRateLimiter, validate(resetPasswordSchema), controller.resetPassword);
+exports.authRouter.post("/logout", authenticate, validate(logoutSchema), controller.logout);
+exports.authRouter.get("/me", authenticate, controller.me);
+exports.authRouter.patch("/password", authenticate, validate(changePasswordSchema), controller.changePassword);

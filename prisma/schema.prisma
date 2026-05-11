@@ -1,0 +1,312 @@
+// Defines the database models and Prisma client setup.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPER_ADMIN
+  TENANT_ADMIN
+  WAREHOUSE_MANAGER
+  STAFF_MEMBER
+  AUDITOR
+  API_CLIENT
+}
+
+enum TenantPlan {
+  FREE
+  STARTER
+  PROFESSIONAL
+  ENTERPRISE
+  FROZEN
+}
+
+enum TransferStatus {
+  PENDING
+  IN_TRANSIT
+  COMPLETED
+  CANCELLED
+}
+
+enum ReservationStatus {
+  ACTIVE
+  CONFIRMED
+  RELEASED
+  EXPIRED
+}
+
+enum AuditAction {
+  STOCK_ADJUSTED
+  STOCK_RECEIVED
+  ORDER_RESERVED
+  ORDER_CONFIRMED
+  TRANSFER_INITIATED
+  TRANSFER_COMPLETED
+  DECAY_APPLIED
+  USER_ROLE_CHANGED
+  TENANT_SUSPENDED
+  API_KEY_REVOKED
+  USER_REGISTERED
+  USER_LOGIN
+  USER_LOGOUT
+  EMAIL_VERIFICATION_SENT
+  EMAIL_VERIFIED
+  PASSWORD_RESET_REQUESTED
+  PASSWORD_RESET_COMPLETED
+  EMAIL_QUEUED
+  EMAIL_SENT
+  EMAIL_FAILED
+  REORDER_FORECAST_APPLIED
+  RESERVATION_RELEASED
+}
+
+model Tenant {
+  id        String     @id @default(uuid()) @db.Uuid
+  name      String
+  plan      TenantPlan @default(FREE)
+  isActive  Boolean    @default(true)
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+
+  users        User[]
+  locations    Location[]
+  skus         Sku[]
+  auditLogs    AuditLog[]
+  salesHistory SalesHistory[]
+  reservations Reservation[]
+
+  @@map("tenants")
+}
+
+model User {
+  id             String    @id @default(uuid()) @db.Uuid
+  tenantId       String    @db.Uuid
+  email          String
+  passwordHash   String
+  role           UserRole  @default(STAFF_MEMBER)
+  isActive        Boolean   @default(true)
+  emailVerifiedAt DateTime?
+  lastLoginAt     DateTime?
+  failedAttempts  Int       @default(0)
+  lockedUntil    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  tenant             Tenant          @relation(fields: [tenantId], references: [id])
+  requestedTransfers StockTransfer[] @relation("RequestedBy")
+  approvedTransfers  StockTransfer[] @relation("ApprovedBy")
+  auditLogs          AuditLog[]
+  refreshTokens      RefreshToken[]
+  verificationTokens EmailVerificationToken[]
+  passwordResetTokens PasswordResetToken[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@index([tenantId, email])
+  @@map("users")
+}
+
+
+model EmailVerificationToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("email_verification_tokens")
+}
+
+model PasswordResetToken {
+  id        String    @id @default(uuid()) @db.Uuid
+  userId    String    @db.Uuid
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("password_reset_tokens")
+}
+
+model RefreshToken {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @db.Uuid
+  tokenHash  String    @unique
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("refresh_tokens")
+}
+
+model Location {
+  id        String   @id @default(uuid()) @db.Uuid
+  tenantId  String   @db.Uuid
+  name      String
+  address   String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+
+  tenant            Tenant          @relation(fields: [tenantId], references: [id])
+  inventoryItems    Inventory[]
+  outboundTransfers StockTransfer[] @relation("SourceLocation")
+  inboundTransfers  StockTransfer[] @relation("DestinationLocation")
+  salesHistory      SalesHistory[]
+
+  @@index([tenantId])
+  @@map("locations")
+}
+
+model Sku {
+  id         String   @id @default(uuid()) @db.Uuid
+  tenantId   String   @db.Uuid
+  name       String
+  skuCode    String
+  unit       String   @default("piece")
+  costPrice  Decimal  @db.Decimal(12, 2)
+  sellPrice  Decimal  @db.Decimal(12, 2)
+  barcode    String?
+  isArchived Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  tenant         Tenant          @relation(fields: [tenantId], references: [id])
+  inventoryItems Inventory[]
+  transfers      StockTransfer[]
+  salesHistory   SalesHistory[]
+
+  @@unique([tenantId, skuCode])
+  @@index([tenantId])
+  @@index([tenantId, skuCode])
+  @@map("skus")
+}
+
+model Inventory {
+  id              String    @id @default(uuid()) @db.Uuid
+  tenantId        String    @db.Uuid
+  skuId           String    @db.Uuid
+  locationId      String    @db.Uuid
+  quantity        Int       @default(0)
+  reorderPoint    Int       @default(0)
+  discountPct     Int       @default(0)
+  daysInInventory Int       @default(0)
+  receivedAt      DateTime  @default(now())
+  lastDecayAt     DateTime?
+  decayCycles     Int       @default(0)
+  isSold          Boolean   @default(false)
+  isArchived      Boolean   @default(false)
+  updatedAt       DateTime  @updatedAt
+
+  sku          Sku           @relation(fields: [skuId], references: [id])
+  location     Location      @relation(fields: [locationId], references: [id])
+  reservations Reservation[]
+
+  @@unique([tenantId, skuId, locationId])
+  @@index([tenantId, skuId])
+  @@index([tenantId, locationId])
+  @@index([tenantId, daysInInventory])
+  @@map("inventory")
+}
+
+model Reservation {
+  id          String            @id @default(uuid()) @db.Uuid
+  tenantId    String            @db.Uuid
+  inventoryId String            @db.Uuid
+  orderId     String            @db.Uuid
+  quantity    Int
+  status      ReservationStatus @default(ACTIVE)
+  expiresAt   DateTime
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  inventory Inventory @relation(fields: [inventoryId], references: [id])
+
+  @@unique([tenantId, orderId, inventoryId])
+  @@index([tenantId, status, expiresAt])
+  @@index([inventoryId])
+  @@index([status, expiresAt])
+  @@map("reservations")
+}
+
+model SalesHistory {
+  id           String   @id @default(uuid()) @db.Uuid
+  tenantId     String   @db.Uuid
+  skuId        String   @db.Uuid
+  locationId   String   @db.Uuid
+  quantitySold Int
+  soldAt       DateTime @default(now())
+  source       String   @default("manual")
+  createdAt    DateTime @default(now())
+
+  tenant   Tenant   @relation(fields: [tenantId], references: [id])
+  sku      Sku      @relation(fields: [skuId], references: [id])
+  location Location @relation(fields: [locationId], references: [id])
+
+  @@index([tenantId, skuId, locationId, soldAt])
+  @@index([tenantId, soldAt])
+  @@map("sales_history")
+}
+
+model StockTransfer {
+  id                    String         @id @default(uuid()) @db.Uuid
+  tenantId              String         @db.Uuid
+  skuId                 String         @db.Uuid
+  sourceLocationId      String         @db.Uuid
+  destinationLocationId String         @db.Uuid
+  quantity              Int
+  status                TransferStatus @default(PENDING)
+  requestedById         String         @db.Uuid
+  approvedById          String?        @db.Uuid
+  completedAt           DateTime?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  sku                 Sku      @relation(fields: [skuId], references: [id])
+  sourceLocation      Location @relation("SourceLocation", fields: [sourceLocationId], references: [id])
+  destinationLocation Location @relation("DestinationLocation", fields: [destinationLocationId], references: [id])
+  requestedBy         User     @relation("RequestedBy", fields: [requestedById], references: [id])
+  approvedBy          User?    @relation("ApprovedBy", fields: [approvedById], references: [id])
+
+  @@index([tenantId, status])
+  @@index([tenantId, skuId])
+  @@map("stock_transfers")
+}
+
+model AuditLog {
+  id         BigInt      @id @default(autoincrement())
+  tenantId   String      @db.Uuid
+  actorId    String?     @db.Uuid
+  entityType String
+  entityId   String      @db.Uuid
+  action     AuditAction
+  payload    Json
+  ipAddress  String?
+  createdAt  DateTime    @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id])
+  actor  User?  @relation(fields: [actorId], references: [id])
+
+  @@index([tenantId, createdAt])
+  @@index([tenantId, entityId])
+  @@index([tenantId, actorId, createdAt])
+  @@map("audit_log")
+}

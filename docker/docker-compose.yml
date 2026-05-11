@@ -1,0 +1,53 @@
+# Runs the backend and its services with Docker Compose.
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    env_file:
+      - ../.env
+    ports:
+      - "3001:3001"
+    environment:
+      PORT: 3001
+      DATABASE_URL: postgresql://leanstock:leanstock@postgres:5432/leanstock?schema=public
+      REDIS_URL: redis://redis:6379
+      APP_BASE_URL: http://localhost:3001
+      EMAIL_DRY_RUN: "true"
+      EMAIL_WORKER_ENABLED: "true"
+      EMAIL_WORKER_INTERVAL_MS: 2000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: leanstock
+      POSTGRES_PASSWORD: leanstock
+      POSTGRES_DB: leanstock
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U leanstock -d leanstock"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+volumes:
+  postgres-data:
+  redis-data:
